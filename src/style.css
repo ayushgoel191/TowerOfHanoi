@@ -1,0 +1,250 @@
+:root {
+  --bg-color: #0f172a;
+  --glass-bg: rgba(30, 41, 59, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --accent-color: #38bdf8;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --peg-color: #475569;
+  --disk-gradient-1: linear-gradient(135deg, #f472b6, #db2777);
+  --disk-gradient-2: linear-gradient(135deg, #fb923c, #ea580c);
+  --disk-gradient-3: linear-gradient(135deg, #facc15, #ca8a04);
+  --disk-gradient-4: linear-gradient(135deg, #4ade80, #16a34a);
+  --disk-gradient-5: linear-gradient(135deg, #2dd4bf, #0d9488);
+  --disk-gradient-6: linear-gradient(135deg, #60a5fa, #2563eb);
+  --disk-gradient-7: linear-gradient(135deg, #818cf8, #4f46e5);
+  --disk-gradient-8: linear-gradient(135deg, #a78bfa, #7c3aed);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: 'Outfit', sans-serif;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-x: hidden;
+}
+
+#app {
+  width: 100%;
+  max-width: 1200px;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+h1 {
+  font-size: 3rem;
+  font-weight: 700;
+  background: linear-gradient(to right, #38bdf8, #818cf8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 0.5rem;
+}
+
+p.subtitle {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+}
+
+/* Controls Section */
+.controls {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  padding: 1.5rem;
+  border-radius: 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+input[type="number"] {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--glass-border);
+  color: white;
+  padding: 0.6rem 1rem;
+  border-radius: 0.5rem;
+  width: 80px;
+  font-size: 1rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+input[type="number"]:focus {
+  border-color: var(--accent-color);
+}
+
+.speed-options {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.speed-btn {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  padding: 0.5rem 0.8rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 600;
+}
+
+.speed-btn.active {
+  background: var(--accent-color);
+  color: var(--bg-color);
+  border-color: var(--accent-color);
+}
+
+.speed-btn:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.action-btns {
+  display: flex;
+  gap: 1rem;
+}
+
+button.primary {
+  background: var(--accent-color);
+  color: var(--bg-color);
+  border: none;
+  padding: 0.8rem 2rem;
+  border-radius: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.2s, background 0.2s;
+}
+
+button.primary:hover {
+  transform: translateY(-2px);
+  background: #7dd3fc;
+}
+
+button.secondary {
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  border: 1px solid var(--glass-border);
+  padding: 0.8rem 2rem;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+button.secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Visualizer Stage */
+.stage {
+  height: 400px;
+  position: relative;
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-end;
+  background: rgba(15, 23, 42, 0.3);
+  border-radius: 2rem;
+  padding: 0 2rem 40px 2rem;
+  border-bottom: 8px solid var(--peg-color);
+}
+
+.peg-container {
+  position: relative;
+  width: 200px;
+  height: 300px;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+}
+
+.peg {
+  position: absolute;
+  bottom: 0;
+  width: 12px;
+  height: 100%;
+  background-color: var(--peg-color);
+  border-radius: 6px 6px 0 0;
+  z-index: 1;
+}
+
+.peg-label {
+  position: absolute;
+  bottom: -35px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.disk {
+  position: absolute;
+  height: 30px;
+  border-radius: 15px;
+  z-index: 2;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: rgba(0,0,0,0.5);
+}
+
+/* Stats Section */
+.stats {
+  display: flex;
+  justify-content: center;
+  gap: 3rem;
+  margin-top: 1rem;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-value {
+  display: block;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--accent-color);
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* Animation durations classes will be set dynamically via JS */
