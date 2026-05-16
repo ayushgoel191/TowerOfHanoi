@@ -6,7 +6,18 @@ let animationSpeed = 1; // Multiplier
 let isPlaying = false;
 let moves = [];
 let currentMoveIndex = 0;
-let timerId = null;
+let animationGeneration = 0;
+
+// Cancellable sleep — resolves to true if still valid, false if cancelled.
+function sleep(ms, gen) {
+  return new Promise(resolve => {
+    setTimeout(() => resolve(gen === animationGeneration), ms);
+  });
+}
+
+function cancelAnimation() {
+  animationGeneration++;
+}
 
 // DOM Elements
 const app = document.querySelector('#app');
@@ -195,29 +206,30 @@ function moveDisk(diskId, toPegIndex) {
 async function startAnimation() {
   if (isPlaying) return;
   isPlaying = true;
+  const myGen = ++animationGeneration;
   solveBtn.textContent = 'Playing...';
   solveBtn.disabled = true;
   diskInput.disabled = true;
 
-  while (currentMoveIndex < moves.length && isPlaying) {
+  while (currentMoveIndex < moves.length && myGen === animationGeneration) {
     const move = moves[currentMoveIndex];
     moveDisk(move.disk, move.to);
     currentMoveIndex++;
     moveCounter.textContent = currentMoveIndex;
-    
-    await new Promise(resolve => {
-      timerId = setTimeout(resolve, 800 / animationSpeed);
-    });
+
+    const stillValid = await sleep(800 / animationSpeed, myGen);
+    if (!stillValid) return;
   }
 
   if (currentMoveIndex >= moves.length) {
+    isPlaying = false;
     solveBtn.textContent = 'Finished';
   }
 }
 
 function reset() {
   isPlaying = false;
-  clearTimeout(timerId);
+  cancelAnimation();
   diskInput.disabled = false;
   initDisks();
 }
