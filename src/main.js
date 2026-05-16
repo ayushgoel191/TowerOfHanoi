@@ -343,9 +343,16 @@ function resolvePegConflict(changedSelect) {
 }
 
 // Event Listeners
-diskInput.addEventListener('change', () => {
-  if (diskInput.value > 12) diskInput.value = 12;
-  if (diskInput.value < 1) diskInput.value = 1;
+diskInput.addEventListener('input', () => {
+  let n = Number(diskInput.value);
+  if (!Number.isFinite(n)) return; // mid-typing empty string — let user finish
+  if (n > 12) n = 12;
+  if (n < 1) n = 1;
+  const clampedStr = String(n);
+  if (diskInput.value !== clampedStr) diskInput.value = clampedStr;
+  if (n === disksCount) return; // no actual change — skip reset
+  disksCount = n;
+  saveSetting('disks', n);
   reset();
 });
 
