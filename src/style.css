@@ -333,3 +333,95 @@ button.secondary:hover {
   border-radius: 1rem;
   box-shadow: 0 10px 30px -10px rgba(74, 222, 128, 0.5);
 }
+
+/* ---------- Recursion tree panel ---------- */
+.tree-panel {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 1.25rem;
+  padding: 0;
+  overflow: hidden;
+}
+
+.tree-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.25rem;
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text-primary);
+  user-select: none;
+}
+
+.tree-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tree-toggle {
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+
+.tree-body {
+  padding: 0.5rem 1rem 1rem 1rem;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  max-height: 480px;
+  overflow: auto;
+}
+
+.tree-panel.collapsed .tree-body {
+  display: none;
+}
+
+.tree-node {
+  border-left: 2px solid var(--glass-border);
+  padding-left: 0.75rem;
+  margin: 0.25rem 0;
+}
+
+.tree-node.tree-fs4 {
+  border-left-color: #a78bfa;
+}
+
+.tree-node.tree-h3 {
+  border-left-color: var(--accent-color);
+}
+
+.tree-node.in-progress {
+  background: rgba(56, 189, 248, 0.06);
+  border-radius: 0.25rem;
+}
+
+.tree-node-label {
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  padding: 0.15rem 0;
+}
+
+.tree-children {
+  padding-left: 0.75rem;
+}
+
+.tree-leaf {
+  padding: 0.15rem 0.4rem;
+  margin: 0.1rem 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  border-radius: 0.25rem;
+}
+
+.tree-leaf.active {
+  background: var(--accent-color);
+  color: var(--bg-color);
+  font-weight: 700;
+}
+
+.tree-omitted {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  padding: 0.5rem;
+}

@@ -103,6 +103,118 @@ export function getMovesForMode(mode, n) {
   return hanoi3(n, 0, 2, 1);
 }
 
+// ---------- Recursion tree builder ----------
+// Mirrors the recursive solve calls. Each leaf carries a move index that
+// maps to the corresponding entry in the moves array produced alongside it.
+
+export function buildTree(mode, n) {
+  const moves = [];
+  let cursor = 0;
+
+  function makeH3Node(k, s, t, a, offset = 0) {
+    const start = cursor;
+    if (k === 0) {
+      const end = cursor - 1;
+      return { call: `H3(n=0)`, n: 0, src: s, tgt: t, kind: 'h3', children: [], moveStart: start, moveEnd: end };
+    }
+    if (k === 1) {
+      const idx = cursor;
+      moves.push({ disk: 1 + offset, from: s, to: t });
+      cursor++;
+      return {
+        call: `move disk ${1 + offset}: ${pegLabel(s)} → ${pegLabel(t)}`,
+        n: 1,
+        src: s,
+        tgt: t,
+        kind: 'leaf',
+        children: [],
+        moveStart: idx,
+        moveEnd: idx,
+        moveIndex: idx,
+      };
+    }
+    const children = [];
+    children.push(makeH3Node(k - 1, s, a, t, offset));
+    const leafIdx = cursor;
+    moves.push({ disk: k + offset, from: s, to: t });
+    cursor++;
+    children.push({
+      call: `move disk ${k + offset}: ${pegLabel(s)} → ${pegLabel(t)}`,
+      n: 1,
+      src: s,
+      tgt: t,
+      kind: 'leaf',
+      children: [],
+      moveStart: leafIdx,
+      moveEnd: leafIdx,
+      moveIndex: leafIdx,
+    });
+    children.push(makeH3Node(k - 1, a, t, s, offset));
+    const end = cursor - 1;
+    return {
+      call: `H3(n=${k}, ${pegLabel(s)}→${pegLabel(t)} via ${pegLabel(a)})`,
+      n: k,
+      src: s,
+      tgt: t,
+      kind: 'h3',
+      children,
+      moveStart: start,
+      moveEnd: end,
+    };
+  }
+
+  function makeFS4Node(k, s, t, a1, a2) {
+    const start = cursor;
+    if (k === 0) {
+      return { call: `FS(n=0)`, n: 0, src: s, tgt: t, kind: 'fs4', children: [], moveStart: start, moveEnd: cursor - 1 };
+    }
+    if (k === 1) {
+      const idx = cursor;
+      moves.push({ disk: 1, from: s, to: t });
+      cursor++;
+      return {
+        call: `move disk 1: ${pegLabel(s)} → ${pegLabel(t)}`,
+        n: 1,
+        src: s,
+        tgt: t,
+        kind: 'leaf',
+        children: [],
+        moveStart: idx,
+        moveEnd: idx,
+        moveIndex: idx,
+      };
+    }
+    const split = optimalK(k);
+    const children = [];
+    children.push(makeFS4Node(split, s, a1, a2, t));
+    children.push(makeH3Node(k - split, s, t, a2, split));
+    children.push(makeFS4Node(split, a1, t, a2, s));
+    const end = cursor - 1;
+    return {
+      call: `FS(n=${k}, k=${split}, ${pegLabel(s)}→${pegLabel(t)})`,
+      n: k,
+      src: s,
+      tgt: t,
+      kind: 'fs4',
+      children,
+      moveStart: start,
+      moveEnd: end,
+    };
+  }
+
+  let root;
+  if (mode === '4') {
+    root = makeFS4Node(n, 0, 3, 1, 2);
+  } else {
+    root = makeH3Node(n, 0, 2, 1, 0);
+  }
+  return { root, moves };
+}
+
+function pegLabel(idx) {
+  return ['A', 'B', 'C', 'D'][idx] ?? `P${idx}`;
+}
+
 // Helper for stats display.
 export function classicalMoves(n) {
   return Math.pow(2, n) - 1;

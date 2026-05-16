@@ -3,6 +3,7 @@ import {
   getHanoiMoves,
   getMovesForMode,
   classicalMoves,
+  buildTree,
 } from './hanoi.js'
 
 // Re-export the legacy interface so any consumer reaching for it still finds it.
@@ -28,6 +29,13 @@ let manualMoveCount = 0;
 let manualDeviated = false;
 let manualOptimalPtr = 0;
 let manualBusy = false;
+
+// Recursion tree state
+let recursionTreeRoot = null;
+let lastActiveLeaf = null;
+let lastActiveAncestors = [];
+
+const TREE_CAP = 8;
 
 // DOM Elements
 const app = document.querySelector('#app');
@@ -97,6 +105,14 @@ app.innerHTML = `
 
   <section class="stage" id="stage"></section>
 
+  <aside id="tree-panel" class="tree-panel collapsed">
+    <div class="tree-header" id="tree-header">
+      <span>Recursion Tree</span>
+      <span class="tree-toggle">[+]</span>
+    </div>
+    <div class="tree-body" id="tree-body"></div>
+  </aside>
+
   <div id="win-banner" class="win-banner" style="display:none;"></div>
 `;
 
@@ -112,6 +128,10 @@ const speedBtns = document.querySelectorAll('.speed-btn');
 const pegModeBtns = document.querySelectorAll('#peg-mode-options .mode-btn');
 const playModeBtns = document.querySelectorAll('#play-mode-options .mode-btn');
 const stageEl = document.getElementById('stage');
+const treePanel = document.getElementById('tree-panel');
+const treeHeader = document.getElementById('tree-header');
+const treeBody = document.getElementById('tree-body');
+const treeToggle = treePanel.querySelector('.tree-toggle');
 const manualStatus = document.getElementById('manual-status');
 const winBanner = document.getElementById('win-banner');
 
@@ -216,6 +236,7 @@ function initDisks() {
 
   hideWinBanner();
   applyPlayModeUI();
+  rebuildTreePanel();
   updateManualStatus('');
 }
 
@@ -278,6 +299,7 @@ async function startAnimation() {
     moveDisk(move.disk, move.to);
     currentMoveIndex++;
     moveCounter.textContent = currentMoveIndex;
+    highlightTreeStep(currentMoveIndex - 1);
 
     await new Promise(resolve => {
       timerId = setTimeout(resolve, 800 / animationSpeed);
@@ -366,6 +388,7 @@ function onPegClick(pegIdx) {
       expected.from === fromIdx &&
       expected.to === pegIdx
     ) {
+      highlightTreeStep(manualOptimalPtr);
       manualOptimalPtr++;
     } else {
       manualDeviated = true;
@@ -459,6 +482,7 @@ function handleHint() {
   manualOptimalPtr++;
   manualMoveCount++;
   moveCounter.textContent = String(manualMoveCount);
+  highlightTreeStep(manualOptimalPtr - 1);
   updateManualStatus(
     `Hint: moved disk ${next.disk} from ${pegLabel(next.from)} to ${pegLabel(next.to)}.`
   );
@@ -476,6 +500,84 @@ function handleGiveUp() {
   reset();
   applyPlayModeUI();
   startAnimation();
+}
+
+// ---------- Recursion tree ----------
+
+function rebuildTreePanel() {
+  treeBody.innerHTML = '';
+  recursionTreeRoot = null;
+  lastActiveLeaf = null;
+  lastActiveAncestors = [];
+
+  if (disksCount > TREE_CAP) {
+    const note = document.createElement('div');
+    note.className = 'tree-omitted';
+    note.textContent = `Tree omitted for n > ${TREE_CAP} (${moves.length} moves would yield a very large tree). Reduce disks to view the recursion tree.`;
+    treeBody.appendChild(note);
+    return;
+  }
+
+  const built = buildTree(currentMode, disksCount);
+  recursionTreeRoot = built.root;
+  const rendered = renderNode(built.root);
+  treeBody.appendChild(rendered);
+}
+
+function renderNode(node) {
+  const wrapper = document.createElement('div');
+  if (node.kind === 'leaf') {
+    wrapper.className = 'tree-leaf';
+    wrapper.dataset.moveIndex = String(node.moveIndex);
+    wrapper.textContent = node.call;
+    return wrapper;
+  }
+  wrapper.className = `tree-node tree-${node.kind}`;
+  wrapper.dataset.moveStart = String(node.moveStart);
+  wrapper.dataset.moveEnd = String(node.moveEnd);
+  const label = document.createElement('div');
+  label.className = 'tree-node-label';
+  label.textContent = node.call;
+  wrapper.appendChild(label);
+  if (node.children && node.children.length) {
+    const childrenWrap = document.createElement('div');
+    childrenWrap.className = 'tree-children';
+    for (const c of node.children) {
+      childrenWrap.appendChild(renderNode(c));
+    }
+    wrapper.appendChild(childrenWrap);
+  }
+  return wrapper;
+}
+
+function highlightTreeStep(moveIdx) {
+  if (!recursionTreeRoot) return;
+  if (lastActiveLeaf) lastActiveLeaf.classList.remove('active');
+  lastActiveAncestors.forEach(a => a.classList.remove('in-progress'));
+  lastActiveAncestors = [];
+
+  const leaf = treeBody.querySelector(`.tree-leaf[data-move-index="${moveIdx}"]`);
+  if (!leaf) return;
+  leaf.classList.add('active');
+  lastActiveLeaf = leaf;
+  // Walk up the DOM marking ancestor tree-nodes whose range includes moveIdx.
+  let parent = leaf.parentElement;
+  while (parent && parent !== treeBody) {
+    if (parent.classList && parent.classList.contains('tree-node')) {
+      const s = parseInt(parent.dataset.moveStart);
+      const e = parseInt(parent.dataset.moveEnd);
+      if (moveIdx >= s && moveIdx <= e) {
+        parent.classList.add('in-progress');
+        lastActiveAncestors.push(parent);
+      }
+    }
+    parent = parent.parentElement;
+  }
+}
+
+function toggleTreePanel() {
+  treePanel.classList.toggle('collapsed');
+  treeToggle.textContent = treePanel.classList.contains('collapsed') ? '[+]' : '[−]';
 }
 
 // Event Listeners
@@ -516,6 +618,8 @@ playModeBtns.forEach(btn => {
     reset();
   });
 });
+
+treeHeader.addEventListener('click', toggleTreePanel);
 
 // Initialize
 rebuildStage();
