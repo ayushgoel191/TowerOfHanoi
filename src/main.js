@@ -19,6 +19,15 @@ let moves = [];
 let currentMoveIndex = 0;
 let timerId = null;
 let currentMode = '3'; // '3' or '4'
+let playMode = 'auto'; // 'auto' or 'manual'
+
+// Manual mode state
+let manualState = []; // array of arrays; each is disk ids bottom→top
+let selectedPegIdx = null;
+let manualMoveCount = 0;
+let manualDeviated = false;
+let manualOptimalPtr = 0;
+let manualBusy = false;
 
 // DOM Elements
 const app = document.querySelector('#app');
@@ -43,6 +52,14 @@ app.innerHTML = `
     </div>
 
     <div class="control-group">
+      <label>Play</label>
+      <div class="mode-options" id="play-mode-options">
+        <button class="mode-btn active" data-play="auto">Auto</button>
+        <button class="mode-btn" data-play="manual">Manual</button>
+      </div>
+    </div>
+
+    <div class="control-group">
       <label>Animation Speed</label>
       <div class="speed-options">
         <button class="speed-btn active" data-speed="1">1x</button>
@@ -55,6 +72,8 @@ app.innerHTML = `
 
     <div class="action-btns">
       <button id="solve-btn" class="primary">Start Animation</button>
+      <button id="hint-btn" class="primary manual-only" style="display:none;">Hint</button>
+      <button id="giveup-btn" class="secondary manual-only" style="display:none;">Give Up</button>
       <button id="reset-btn" class="secondary">Reset</button>
     </div>
   </section>
@@ -70,27 +89,44 @@ app.innerHTML = `
     </div>
   </div>
 
+  <div id="manual-status" class="manual-status" style="display:none;"></div>
+
   <div id="high-disk-warning" style="display: none; text-align: center; color: #fbbf24; font-size: 0.9rem; margin-top: -1rem;">
     Note: With <span id="warn-count"></span> disks, it will take <span id="warn-moves"></span> moves.
   </div>
 
   <section class="stage" id="stage"></section>
+
+  <div id="win-banner" class="win-banner" style="display:none;"></div>
 `;
 
 const diskInput = document.getElementById('disk-input');
 const solveBtn = document.getElementById('solve-btn');
 const resetBtn = document.getElementById('reset-btn');
+const hintBtn = document.getElementById('hint-btn');
+const giveupBtn = document.getElementById('giveup-btn');
 const moveCounter = document.getElementById('move-counter');
 const totalMovesEl = document.getElementById('total-moves');
 const totalMovesLabel = document.getElementById('total-moves-label');
 const speedBtns = document.querySelectorAll('.speed-btn');
 const pegModeBtns = document.querySelectorAll('#peg-mode-options .mode-btn');
+const playModeBtns = document.querySelectorAll('#play-mode-options .mode-btn');
 const stageEl = document.getElementById('stage');
+const manualStatus = document.getElementById('manual-status');
+const winBanner = document.getElementById('win-banner');
 
 let pegContainers = [];
 
 function pegCount() {
   return currentMode === '4' ? 4 : 3;
+}
+
+function targetPegIdx() {
+  return currentMode === '4' ? 3 : 2;
+}
+
+function pegLabel(idx) {
+  return ['A', 'B', 'C', 'D'][idx] ?? `P${idx}`;
 }
 
 function rebuildStage() {
@@ -108,6 +144,7 @@ function rebuildStage() {
       <div class="peg"></div>
       <div class="peg-label">Peg ${labels[i]}</div>
     `;
+    container.addEventListener('click', () => onPegClick(i));
     stageEl.appendChild(container);
     pegContainers.push(container);
   }
@@ -167,6 +204,19 @@ function initDisks() {
   isPlaying = false;
   solveBtn.textContent = 'Start Animation';
   solveBtn.disabled = false;
+
+  manualMoveCount = 0;
+  manualDeviated = false;
+  manualOptimalPtr = 0;
+  selectedPegIdx = null;
+  manualBusy = false;
+  manualState = [];
+  for (let i = 0; i < pegCount(); i++) manualState.push([]);
+  for (let i = count; i >= 1; i--) manualState[0].push(i);
+
+  hideWinBanner();
+  applyPlayModeUI();
+  updateManualStatus('');
 }
 
 function updateMoveStats() {
@@ -216,6 +266,7 @@ function moveDisk(diskId, toPegIndex) {
 }
 
 async function startAnimation() {
+  if (playMode !== 'auto') return;
   if (isPlaying) return;
   isPlaying = true;
   solveBtn.textContent = 'Playing...';
@@ -245,6 +296,188 @@ function reset() {
   initDisks();
 }
 
+// ---------- Manual mode ----------
+
+function applyPlayModeUI() {
+  const manualOnly = document.querySelectorAll('.manual-only');
+  if (playMode === 'manual') {
+    solveBtn.style.display = 'none';
+    manualOnly.forEach(el => (el.style.display = ''));
+    manualStatus.style.display = '';
+    updateManualStatus(
+      `Click a peg to pick up its top disk. Goal: move all disks to peg ${pegLabel(targetPegIdx())}.`
+    );
+  } else {
+    solveBtn.style.display = '';
+    manualOnly.forEach(el => (el.style.display = 'none'));
+    manualStatus.style.display = 'none';
+    clearSelection();
+  }
+}
+
+function onPegClick(pegIdx) {
+  if (playMode !== 'manual') return;
+  if (manualBusy) return;
+  if (isWon()) return;
+
+  if (selectedPegIdx === null) {
+    // Pick up top disk of pegIdx.
+    const stack = manualState[pegIdx];
+    if (stack.length === 0) return;
+    selectedPegIdx = pegIdx;
+    highlightSelectedDisk(pegIdx);
+    return;
+  }
+
+  if (selectedPegIdx === pegIdx) {
+    clearSelection();
+    return;
+  }
+
+  // Attempt move from selectedPegIdx → pegIdx.
+  const fromStack = manualState[selectedPegIdx];
+  const toStack = manualState[pegIdx];
+  const movingDisk = fromStack[fromStack.length - 1];
+  const targetTop = toStack[toStack.length - 1];
+
+  if (targetTop !== undefined && targetTop < movingDisk) {
+    // Invalid: larger on smaller.
+    shakePeg(pegIdx);
+    clearSelection();
+    return;
+  }
+
+  // Valid move.
+  manualBusy = true;
+  fromStack.pop();
+  toStack.push(movingDisk);
+  const fromIdx = selectedPegIdx;
+  clearSelection();
+  moveDisk(movingDisk, pegIdx);
+  manualMoveCount++;
+  moveCounter.textContent = String(manualMoveCount);
+
+  // Track optimal-path adherence.
+  if (!manualDeviated) {
+    const expected = moves[manualOptimalPtr];
+    if (
+      expected &&
+      expected.disk === movingDisk &&
+      expected.from === fromIdx &&
+      expected.to === pegIdx
+    ) {
+      manualOptimalPtr++;
+    } else {
+      manualDeviated = true;
+      updateManualStatus(
+        'You have deviated from the optimal path. Hints are disabled. Reset to use hints, or click Give Up.'
+      );
+    }
+  }
+
+  setTimeout(() => {
+    manualBusy = false;
+    if (isWon()) showWinBanner();
+  }, 650 / animationSpeed);
+}
+
+function highlightSelectedDisk(pegIdx) {
+  const stack = manualState[pegIdx];
+  const topDiskId = stack[stack.length - 1];
+  const el = document.getElementById(`disk-${topDiskId}`);
+  if (el) el.classList.add('selected');
+  pegContainers[pegIdx].classList.add('peg-selected');
+}
+
+function clearSelection() {
+  if (selectedPegIdx === null) {
+    document.querySelectorAll('.disk.selected').forEach(d => d.classList.remove('selected'));
+    document.querySelectorAll('.peg-container.peg-selected').forEach(p => p.classList.remove('peg-selected'));
+    return;
+  }
+  const stack = manualState[selectedPegIdx];
+  const topDiskId = stack[stack.length - 1];
+  if (topDiskId !== undefined) {
+    const el = document.getElementById(`disk-${topDiskId}`);
+    if (el) el.classList.remove('selected');
+  }
+  pegContainers[selectedPegIdx]?.classList.remove('peg-selected');
+  selectedPegIdx = null;
+}
+
+function shakePeg(pegIdx) {
+  const c = pegContainers[pegIdx];
+  if (!c) return;
+  c.classList.remove('shake');
+  // Force reflow to restart animation.
+  void c.offsetWidth;
+  c.classList.add('shake');
+  setTimeout(() => c.classList.remove('shake'), 350);
+}
+
+function isWon() {
+  const tgt = targetPegIdx();
+  return manualState[tgt] && manualState[tgt].length === disksCount;
+}
+
+function showWinBanner() {
+  const optimal = moves.length;
+  winBanner.style.display = '';
+  winBanner.innerHTML = `<strong>You won!</strong> Solved in ${manualMoveCount} moves (optimal: ${optimal}).`;
+}
+
+function hideWinBanner() {
+  winBanner.style.display = 'none';
+  winBanner.textContent = '';
+}
+
+function updateManualStatus(msg) {
+  manualStatus.textContent = msg || '';
+}
+
+function handleHint() {
+  if (playMode !== 'manual') return;
+  if (manualBusy) return;
+  if (isWon()) return;
+  if (manualDeviated) {
+    updateManualStatus(
+      'Cannot hint after deviation. Click Reset to start over, or Give Up to replay the optimal solution.'
+    );
+    return;
+  }
+  if (manualOptimalPtr >= moves.length) {
+    updateManualStatus('Already at the final state.');
+    return;
+  }
+  const next = moves[manualOptimalPtr];
+  manualBusy = true;
+  const fromStack = manualState[next.from];
+  const toStack = manualState[next.to];
+  fromStack.pop();
+  toStack.push(next.disk);
+  moveDisk(next.disk, next.to);
+  manualOptimalPtr++;
+  manualMoveCount++;
+  moveCounter.textContent = String(manualMoveCount);
+  updateManualStatus(
+    `Hint: moved disk ${next.disk} from ${pegLabel(next.from)} to ${pegLabel(next.to)}.`
+  );
+  setTimeout(() => {
+    manualBusy = false;
+    if (isWon()) showWinBanner();
+  }, 650 / animationSpeed);
+}
+
+function handleGiveUp() {
+  if (playMode !== 'manual') return;
+  // Always reset and replay the full optimal solution from scratch.
+  playMode = 'auto';
+  playModeBtns.forEach(b => b.classList.toggle('active', b.dataset.play === 'auto'));
+  reset();
+  applyPlayModeUI();
+  startAnimation();
+}
+
 // Event Listeners
 diskInput.addEventListener('change', () => {
   if (parseInt(diskInput.value) > 12) diskInput.value = 12;
@@ -254,6 +487,8 @@ diskInput.addEventListener('change', () => {
 
 solveBtn.addEventListener('click', startAnimation);
 resetBtn.addEventListener('click', reset);
+hintBtn.addEventListener('click', handleHint);
+giveupBtn.addEventListener('click', handleGiveUp);
 
 speedBtns.forEach(btn => {
   btn.addEventListener('click', () => {
@@ -269,6 +504,15 @@ pegModeBtns.forEach(btn => {
     pegModeBtns.forEach(b => b.classList.toggle('active', b === btn));
     currentMode = btn.dataset.mode;
     rebuildStage();
+    reset();
+  });
+});
+
+playModeBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (btn.dataset.play === playMode) return;
+    playModeBtns.forEach(b => b.classList.toggle('active', b === btn));
+    playMode = btn.dataset.play;
     reset();
   });
 });

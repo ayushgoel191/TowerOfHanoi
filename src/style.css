@@ -280,3 +280,56 @@ button.secondary:hover {
 .stage.four-peg .peg-container {
   width: 160px;
 }
+
+/* ---------- Manual mode visuals ---------- */
+.disk.selected {
+  transform: translateY(-22px);
+  box-shadow: 0 0 22px var(--accent-color), 0 4px 10px rgba(0, 0, 0, 0.3);
+  outline: 2px solid var(--accent-color);
+}
+
+.peg-container {
+  cursor: pointer;
+}
+
+.peg-container.peg-selected .peg {
+  background-color: var(--accent-color);
+}
+
+@keyframes peg-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-8px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-6px); }
+  80% { transform: translateX(6px); }
+}
+
+.peg-container.shake {
+  animation: peg-shake 0.35s ease-in-out;
+}
+
+.peg-container.shake .peg {
+  background-color: #ef4444;
+}
+
+.manual-status {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 0.75rem;
+  padding: 0.6rem 1rem;
+  margin-top: -1rem;
+}
+
+.win-banner {
+  text-align: center;
+  background: linear-gradient(135deg, #4ade80, #16a34a);
+  color: #0f172a;
+  font-size: 1.25rem;
+  font-weight: 700;
+  padding: 1rem 1.5rem;
+  border-radius: 1rem;
+  box-shadow: 0 10px 30px -10px rgba(74, 222, 128, 0.5);
+}
