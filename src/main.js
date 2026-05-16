@@ -7,6 +7,9 @@ let isPlaying = false;
 let moves = [];
 let currentMoveIndex = 0;
 let animationGeneration = 0;
+let playState = 'idle'; // 'idle' | 'playing' | 'paused' | 'finished'
+let startTime = null;
+let lastDirection = 'forward'; // 'forward' | 'reverse' — for readout
 
 // Cancellable sleep — resolves to true if still valid, false if cancelled.
 function sleep(ms, gen) {
@@ -18,6 +21,8 @@ function sleep(ms, gen) {
 function cancelAnimation() {
   animationGeneration++;
 }
+
+const pegLabel = i => ['A', 'B', 'C'][i];
 
 // DOM Elements
 const app = document.querySelector('#app');
@@ -45,7 +50,13 @@ app.innerHTML = `
     </div>
 
     <div class="action-btns">
-      <button id="solve-btn" class="primary">Start Animation</button>
+      <button id="step-back-btn" class="icon-btn" title="Step Back (←)" aria-label="Step Back">&larr;</button>
+      <button id="solve-btn" class="primary">
+        <span class="btn-icon">&#9654;&#xFE0E;</span>
+        <span class="btn-label">Play</span>
+      </button>
+      <button id="step-forward-btn" class="icon-btn" title="Step Forward (→)" aria-label="Step Forward">&rarr;</button>
+      <button id="skip-end-btn" class="icon-btn" title="Skip to End" aria-label="Skip to End">&#9197;</button>
       <button id="reset-btn" class="secondary">Reset</button>
     </div>
   </section>
@@ -61,31 +72,52 @@ app.innerHTML = `
     </div>
   </div>
 
+  <div id="move-readout"><span id="readout-text">Ready</span></div>
+
   <div id="high-disk-warning" style="display: none; text-align: center; color: #fbbf24; font-size: 0.9rem; margin-top: -1rem;">
-    ⚠️ Note: With <span id="warn-count"></span> disks, it will take <span id="warn-moves"></span> moves!
+    Note: With <span id="warn-count"></span> disks, it will take <span id="warn-moves"></span> moves!
   </div>
 
-  <section class="stage">
-    <div class="peg-container" id="peg-0">
-      <div class="peg"></div>
-      <div class="peg-label">Peg A</div>
-    </div>
-    <div class="peg-container" id="peg-1">
-      <div class="peg"></div>
-      <div class="peg-label">Peg B</div>
-    </div>
-    <div class="peg-container" id="peg-2">
-      <div class="peg"></div>
-      <div class="peg-label">Peg C</div>
-    </div>
-  </section>
+  <div class="stage-with-log">
+    <section class="stage">
+      <div class="peg-container" id="peg-0">
+        <div class="peg"></div>
+        <div class="peg-label">Peg A</div>
+      </div>
+      <div class="peg-container" id="peg-1">
+        <div class="peg"></div>
+        <div class="peg-label">Peg B</div>
+      </div>
+      <div class="peg-container" id="peg-2">
+        <div class="peg"></div>
+        <div class="peg-label">Peg C</div>
+      </div>
+    </section>
+
+    <aside class="move-log">
+      <h3>Moves</h3>
+      <ol id="move-log-list"></ol>
+    </aside>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <div id="confetti" class="confetti" aria-hidden="true"></div>
 `;
 
 const diskInput = document.getElementById('disk-input');
 const solveBtn = document.getElementById('solve-btn');
+const solveBtnIcon = solveBtn.querySelector('.btn-icon');
+const solveBtnLabel = solveBtn.querySelector('.btn-label');
 const resetBtn = document.getElementById('reset-btn');
+const stepBackBtn = document.getElementById('step-back-btn');
+const stepForwardBtn = document.getElementById('step-forward-btn');
+const skipEndBtn = document.getElementById('skip-end-btn');
 const moveCounter = document.getElementById('move-counter');
 const totalMovesEl = document.getElementById('total-moves');
+const readoutText = document.getElementById('readout-text');
+const moveLogList = document.getElementById('move-log-list');
+const toastEl = document.getElementById('toast');
+const confettiEl = document.getElementById('confetti');
 const speedBtns = document.querySelectorAll('.speed-btn');
 const pegContainers = [
   document.getElementById('peg-0'),
@@ -109,10 +141,10 @@ function getHanoiMoves(n, source, target, aux) {
 function initDisks() {
   // Clear existing disks
   document.querySelectorAll('.disk').forEach(d => d.remove());
-  
+
   const count = parseInt(diskInput.value);
   disksCount = count;
-  
+
   // Dynamic sizing based on number of disks
   const maxHeight = 280;
   const diskHeight = Math.min(30, Math.floor(maxHeight / count));
@@ -124,24 +156,24 @@ function initDisks() {
     disk.className = 'disk';
     disk.id = `disk-${i}`;
     disk.textContent = i;
-    
+
     // Width logic: largest disk is 180px, smallest is proportional
     const width = 60 + (i * (140 / count));
     disk.style.width = `${width}px`;
     disk.style.height = `${diskHeight}px`;
     disk.style.fontSize = fontSize;
     disk.style.background = `var(--disk-gradient-${((i - 1) % 8) + 1})`;
-    
+
     // Position: bottom of peg 0
     const bottomOffset = (count - i) * spacing;
     disk.style.bottom = `${bottomOffset}px`;
-    
+
     pegContainers[0].appendChild(disk);
   }
 
   moves = getHanoiMoves(count, 0, 2, 1);
   totalMovesEl.textContent = moves.length;
-  
+
   const warning = document.getElementById('high-disk-warning');
   if (count > 8) {
     warning.style.display = 'block';
@@ -154,84 +186,324 @@ function initDisks() {
   currentMoveIndex = 0;
   moveCounter.textContent = '0';
   isPlaying = false;
-  solveBtn.textContent = 'Start Animation';
-  solveBtn.disabled = false;
+  startTime = null;
+  lastDirection = 'forward';
+  setPlayState('idle');
+  buildMoveLog();
+  updateReadout();
+  updateMoveLog();
+  updateStepButtons();
+  hideToast();
 }
 
-function moveDisk(diskId, toPegIndex) {
+function moveDisk(diskId, toPegIndex, { snap = false } = {}) {
   const disk = document.getElementById(`disk-${diskId}`);
   const targetPeg = pegContainers[toPegIndex];
-  
+
   // Dynamic sizing
   const count = parseInt(diskInput.value);
   const maxHeight = 280;
   const diskHeight = Math.min(30, Math.floor(maxHeight / count));
   const spacing = diskHeight + 2;
 
-  // Calculate new position
   const disksInTarget = targetPeg.querySelectorAll('.disk').length;
   const newBottom = disksInTarget * spacing;
-  
-  // Move in DOM (actually we just update styles for animation)
-  // To make it look like it's "jumping" over, we could do multi-step transition,
-  // but for simplicity, we'll use a smooth translation.
-  // We need to move the element to the new parent to keep the relative positioning,
-  // but the animation might jitter. Better: keep them in a global container or 
-  // calculate the transform relative to current position.
-  
-  // Strategy: Calculate current absolute position, append to new peg, calculate new position,
-  // and use CSS transition.
-  
+
+  if (snap) {
+    // No transition — instant placement (used by skip-to-end).
+    disk.style.transition = 'none';
+    targetPeg.appendChild(disk);
+    disk.style.bottom = `${newBottom}px`;
+    disk.style.transform = 'translate(0, 0)';
+    // Force reflow so subsequent CSS changes are not batched into one transition.
+    disk.offsetHeight;
+    return;
+  }
+
   const oldRect = disk.getBoundingClientRect();
   targetPeg.appendChild(disk);
   disk.style.bottom = `${newBottom}px`;
   const newRect = disk.getBoundingClientRect();
-  
-  // Inverse transform for smooth transition
+
+  // Inverse transform for smooth transition (FLIP)
   const deltaX = oldRect.left - newRect.left;
   const deltaY = oldRect.top - newRect.top;
-  
+
   disk.style.transition = 'none';
   disk.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
-  
+
   // Force reflow
   disk.offsetHeight;
-  
+
   // Transition duration based on speed
   const duration = 600 / animationSpeed;
   disk.style.transition = `all ${duration}ms cubic-bezier(0.4, 0, 0.2, 1)`;
   disk.style.transform = 'translate(0, 0)';
 }
 
+function applyMoveAt(index, reverse = false, opts = {}) {
+  const move = moves[index];
+  if (!move) return;
+  const target = reverse ? move.from : move.to;
+  moveDisk(move.disk, target, opts);
+}
+
+function setPlayState(state) {
+  playState = state;
+  isPlaying = state === 'playing';
+  if (state === 'idle') {
+    solveBtnIcon.innerHTML = '&#9654;&#xFE0E;';
+    solveBtnLabel.textContent = 'Play';
+    solveBtn.disabled = false;
+    diskInput.disabled = false;
+  } else if (state === 'playing') {
+    solveBtnIcon.innerHTML = '&#10074;&#10074;';
+    solveBtnLabel.textContent = 'Pause';
+    solveBtn.disabled = false;
+    diskInput.disabled = true;
+  } else if (state === 'paused') {
+    solveBtnIcon.innerHTML = '&#9654;&#xFE0E;';
+    solveBtnLabel.textContent = 'Resume';
+    solveBtn.disabled = false;
+    diskInput.disabled = true;
+  } else if (state === 'finished') {
+    solveBtnIcon.innerHTML = '&#10003;';
+    solveBtnLabel.textContent = 'Finished';
+    solveBtn.disabled = true;
+    diskInput.disabled = false;
+  }
+  updateStepButtons();
+}
+
+function updateStepButtons() {
+  stepBackBtn.disabled = currentMoveIndex <= 0;
+  stepForwardBtn.disabled = currentMoveIndex >= moves.length;
+  skipEndBtn.disabled = currentMoveIndex >= moves.length;
+}
+
+function updateReadout() {
+  if (!moves.length) {
+    readoutText.textContent = 'Ready';
+    return;
+  }
+  if (playState === 'finished' || currentMoveIndex >= moves.length) {
+    readoutText.textContent = `Solved in ${moves.length} moves!`;
+    return;
+  }
+  if (currentMoveIndex === 0 && playState === 'idle') {
+    readoutText.innerHTML = `Ready &mdash; <span class="readout-count">0</span> / ${moves.length} moves`;
+    return;
+  }
+  // Display the most recently applied move (currentMoveIndex - 1).
+  const shownIdx = Math.max(0, currentMoveIndex - 1);
+  const move = moves[shownIdx];
+  const reverse = lastDirection === 'reverse';
+  const from = reverse ? move.to : move.from;
+  const to = reverse ? move.from : move.to;
+  const suffix = reverse ? ' (undo)' : '';
+  readoutText.innerHTML =
+    `Move <span class="readout-count">${currentMoveIndex}</span> / ${moves.length} ` +
+    `&mdash; Disk ${move.disk}: Peg ${pegLabel(from)} &rarr; Peg ${pegLabel(to)}${suffix}`;
+}
+
+function buildMoveLog() {
+  const html = moves
+    .map(
+      (m, i) =>
+        `<li class="move-log-item" data-index="${i}">` +
+        `<span class="log-num">${i + 1}.</span> ` +
+        `Disk ${m.disk}: ${pegLabel(m.from)} &rarr; ${pegLabel(m.to)}` +
+        `</li>`
+    )
+    .join('');
+  moveLogList.innerHTML = html;
+}
+
+function updateMoveLog() {
+  const items = moveLogList.querySelectorAll('.move-log-item');
+  items.forEach((li, i) => {
+    li.classList.remove('current', 'played');
+    if (i < currentMoveIndex - 1) {
+      li.classList.add('played');
+    } else if (i === currentMoveIndex - 1 && currentMoveIndex > 0) {
+      li.classList.add('current');
+    }
+  });
+  if (currentMoveIndex > 0) {
+    const cur = moveLogList.querySelector('.move-log-item.current');
+    if (cur && cur.scrollIntoView) {
+      cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  } else if (items[0]) {
+    moveLogList.scrollTop = 0;
+  }
+}
+
+function showCompletionToast() {
+  const seconds =
+    startTime != null ? ((performance.now() - startTime) / 1000).toFixed(1) : '0.0';
+  toastEl.textContent = `Solved in ${moves.length} moves! (${seconds} s)`;
+  toastEl.classList.remove('toast-hide');
+  toastEl.classList.add('toast-success', 'toast-show');
+  toastEl.hidden = false;
+  // Auto-dismiss
+  clearTimeout(showCompletionToast._dismissId);
+  showCompletionToast._dismissId = setTimeout(hideToast, 4000);
+  fireConfetti();
+}
+
+function hideToast() {
+  if (toastEl.hidden) return;
+  toastEl.classList.remove('toast-show');
+  toastEl.classList.add('toast-hide');
+  setTimeout(() => {
+    toastEl.hidden = true;
+    toastEl.classList.remove('toast-hide');
+  }, 400);
+}
+
+function fireConfetti() {
+  // Build ~24 pieces with randomised offsets.
+  const pieces = [];
+  const count = 24;
+  for (let i = 0; i < count; i++) {
+    const left = Math.random() * 100;
+    const delay = Math.random() * 0.4;
+    const duration = 1.6 + Math.random() * 1.2;
+    const drift = (Math.random() * 2 - 1) * 80;
+    const rot = Math.random() * 720 - 360;
+    pieces.push(
+      `<div class="confetti-piece" style="left:${left}%;animation-delay:${delay}s;animation-duration:${duration}s;--drift:${drift}px;--rot:${rot}deg;"></div>`
+    );
+  }
+  confettiEl.innerHTML = pieces.join('');
+  confettiEl.classList.add('confetti-active');
+  clearTimeout(fireConfetti._stopId);
+  fireConfetti._stopId = setTimeout(() => {
+    confettiEl.classList.remove('confetti-active');
+    confettiEl.innerHTML = '';
+  }, 3000);
+}
+
+function finishSequence() {
+  setPlayState('finished');
+  currentMoveIndex = moves.length;
+  moveCounter.textContent = currentMoveIndex;
+  updateReadout();
+  updateMoveLog();
+  showCompletionToast();
+}
+
 async function startAnimation() {
-  if (isPlaying) return;
-  isPlaying = true;
+  if (playState === 'playing') return;
+  if (currentMoveIndex >= moves.length) return;
+  if (startTime == null) startTime = performance.now();
+  setPlayState('playing');
   const myGen = ++animationGeneration;
-  solveBtn.textContent = 'Playing...';
-  solveBtn.disabled = true;
-  diskInput.disabled = true;
+  lastDirection = 'forward';
 
   while (currentMoveIndex < moves.length && myGen === animationGeneration) {
-    const move = moves[currentMoveIndex];
-    moveDisk(move.disk, move.to);
+    applyMoveAt(currentMoveIndex);
     currentMoveIndex++;
     moveCounter.textContent = currentMoveIndex;
+    updateReadout();
+    updateMoveLog();
+    updateStepButtons();
 
     const stillValid = await sleep(800 / animationSpeed, myGen);
     if (!stillValid) return;
   }
 
-  if (currentMoveIndex >= moves.length) {
-    isPlaying = false;
-    solveBtn.textContent = 'Finished';
+  if (currentMoveIndex >= moves.length && myGen === animationGeneration) {
+    finishSequence();
   }
 }
 
-function reset() {
-  isPlaying = false;
+function pauseAnimation() {
+  if (playState !== 'playing') return;
   cancelAnimation();
-  diskInput.disabled = false;
+  setPlayState('paused');
+  updateReadout();
+}
+
+function toggleSolve() {
+  if (playState === 'playing') {
+    pauseAnimation();
+  } else if (playState === 'idle' || playState === 'paused') {
+    startAnimation();
+  }
+}
+
+function stepForward() {
+  if (playState === 'playing') pauseAnimation();
+  if (currentMoveIndex >= moves.length) return;
+  if (startTime == null) startTime = performance.now();
+  lastDirection = 'forward';
+  applyMoveAt(currentMoveIndex);
+  currentMoveIndex++;
+  moveCounter.textContent = currentMoveIndex;
+  updateReadout();
+  updateMoveLog();
+  if (currentMoveIndex >= moves.length) {
+    finishSequence();
+  } else {
+    updateStepButtons();
+    if (playState === 'idle') setPlayState('paused');
+  }
+}
+
+function stepBackward() {
+  if (playState === 'playing') pauseAnimation();
+  if (currentMoveIndex <= 0) return;
+  currentMoveIndex--;
+  lastDirection = 'reverse';
+  applyMoveAt(currentMoveIndex, true);
+  moveCounter.textContent = currentMoveIndex;
+  updateReadout();
+  updateMoveLog();
+  updateStepButtons();
+  // Stepping back from finished returns us to paused.
+  if (playState === 'finished') {
+    hideToast();
+    setPlayState('paused');
+  } else if (playState === 'idle' && currentMoveIndex > 0) {
+    setPlayState('paused');
+  } else if (currentMoveIndex === 0 && playState !== 'playing') {
+    setPlayState('idle');
+  }
+}
+
+function skipToEnd() {
+  if (playState === 'playing') pauseAnimation();
+  if (currentMoveIndex >= moves.length) return;
+  if (startTime == null) startTime = performance.now();
+  lastDirection = 'forward';
+  while (currentMoveIndex < moves.length) {
+    applyMoveAt(currentMoveIndex, false, { snap: true });
+    currentMoveIndex++;
+  }
+  // Restore normal transition string on all disks so subsequent moves animate.
+  document.querySelectorAll('.disk').forEach(d => {
+    d.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+  });
+  moveCounter.textContent = currentMoveIndex;
+  finishSequence();
+}
+
+function reset() {
+  cancelAnimation();
+  hideToast();
+  confettiEl.classList.remove('confetti-active');
+  confettiEl.innerHTML = '';
   initDisks();
+}
+
+function setSpeed(n) {
+  const btn = Array.from(speedBtns).find(b => parseFloat(b.dataset.speed) === n);
+  if (!btn) return;
+  speedBtns.forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  animationSpeed = n;
 }
 
 // Event Listeners
@@ -241,8 +513,12 @@ diskInput.addEventListener('change', () => {
   reset();
 });
 
-solveBtn.addEventListener('click', startAnimation);
+solveBtn.addEventListener('click', toggleSolve);
 resetBtn.addEventListener('click', reset);
+stepForwardBtn.addEventListener('click', stepForward);
+stepBackBtn.addEventListener('click', stepBackward);
+skipEndBtn.addEventListener('click', skipToEnd);
+toastEl.addEventListener('click', hideToast);
 
 speedBtns.forEach(btn => {
   btn.addEventListener('click', () => {
@@ -250,6 +526,47 @@ speedBtns.forEach(btn => {
     btn.classList.add('active');
     animationSpeed = parseFloat(btn.dataset.speed);
   });
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (event) => {
+  const t = event.target;
+  if (t && (t.tagName === 'INPUT' || t.isContentEditable)) return;
+  switch (event.key) {
+    case ' ':
+    case 'Spacebar':
+      event.preventDefault();
+      toggleSolve();
+      break;
+    case 'r':
+    case 'R':
+      event.preventDefault();
+      reset();
+      break;
+    case 'ArrowLeft':
+      event.preventDefault();
+      stepBackward();
+      break;
+    case 'ArrowRight':
+      event.preventDefault();
+      stepForward();
+      break;
+    case '1':
+      setSpeed(1);
+      break;
+    case '2':
+      setSpeed(2);
+      break;
+    case '3':
+      setSpeed(3);
+      break;
+    case '4':
+      setSpeed(5);
+      break;
+    case '5':
+      setSpeed(10);
+      break;
+  }
 });
 
 // Initialize
