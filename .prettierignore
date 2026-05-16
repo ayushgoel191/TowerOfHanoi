@@ -1,0 +1,9 @@
+dist/
+node_modules/
+package-lock.json
+
+# Pre-existing files preserved in their original style.
+README.md
+index.html
+src/style.css
+src/main.js
