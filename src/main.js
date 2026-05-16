@@ -1,4 +1,5 @@
 import './style.css'
+import { getHanoiMoves } from './hanoi.js';
 
 // State management
 let disksCount = 4;
@@ -83,18 +84,6 @@ const pegContainers = [
 ];
 
 // Logic
-function getHanoiMoves(n, source, target, aux) {
-  const result = [];
-  function solve(n, s, t, a) {
-    if (n === 0) return;
-    solve(n - 1, s, a, t);
-    result.push({ disk: n, from: s, to: t });
-    solve(n - 1, a, t, s);
-  }
-  solve(n, source, target, aux);
-  return result;
-}
-
 function initDisks() {
   // Clear existing disks
   document.querySelectorAll('.disk').forEach(d => d.remove());
