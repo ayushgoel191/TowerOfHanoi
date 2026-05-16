@@ -1,5 +1,17 @@
 import './style.css'
 
+const CONFIG = {
+  MAX_DISK_HEIGHT: 280,
+  DISK_HEIGHT_CAP: 30,
+  DISK_WIDTH_BASE: 60,
+  DISK_WIDTH_RANGE: 140,
+  BASE_MOVE_DURATION_MS: 600,
+  BASE_STEP_DELAY_MS: 800,
+  HIGH_DISK_WARN_THRESHOLD: 8,
+  DISK_COUNT_MIN: 1,
+  DISK_COUNT_MAX: 12,
+};
+
 // State management
 let disksCount = 4;
 let animationSpeed = 1; // Multiplier
@@ -110,10 +122,15 @@ function getHanoiMoves(n, source, target, aux) {
  * @returns {{diskHeight:number, spacing:number, fontSize:string, widthFor:(i:number)=>number}}
  */
 function getGeometry(count) {
-  const diskHeight = Math.min(30, Math.floor(280 / count));
+  const diskHeight = Math.min(
+    CONFIG.DISK_HEIGHT_CAP,
+    Math.floor(CONFIG.MAX_DISK_HEIGHT / count)
+  );
   const spacing = diskHeight + 2;
-  const fontSize = Math.max(0.6, Math.min(0.8, diskHeight / 30)) + 'rem';
-  const widthFor = (i) => 60 + i * (140 / count);
+  const fontSize =
+    Math.max(0.6, Math.min(0.8, diskHeight / CONFIG.DISK_HEIGHT_CAP)) + 'rem';
+  const widthFor = (i) =>
+    CONFIG.DISK_WIDTH_BASE + i * (CONFIG.DISK_WIDTH_RANGE / count);
   return { diskHeight, spacing, fontSize, widthFor };
 }
 
@@ -154,7 +171,7 @@ function initDisks() {
   totalMovesEl.textContent = moves.length;
 
   const warning = document.getElementById('high-disk-warning');
-  if (count > 8) {
+  if (count > CONFIG.HIGH_DISK_WARN_THRESHOLD) {
     warning.style.display = 'block';
     document.getElementById('warn-count').textContent = count;
     document.getElementById('warn-moves').textContent = moves.length;
@@ -212,7 +229,7 @@ function moveDisk(diskId, toPegIndex) {
   disk.offsetHeight;
 
   // Transition duration based on speed
-  const duration = 600 / animationSpeed;
+  const duration = CONFIG.BASE_MOVE_DURATION_MS / animationSpeed;
   disk.style.transition = `all ${duration}ms cubic-bezier(0.4, 0, 0.2, 1)`;
   disk.style.transform = 'translate(0, 0)';
 }
@@ -235,7 +252,7 @@ async function startAnimation() {
     moveCounter.textContent = currentMoveIndex;
 
     await new Promise(resolve => {
-      timerId = setTimeout(resolve, 800 / animationSpeed);
+      timerId = setTimeout(resolve, CONFIG.BASE_STEP_DELAY_MS / animationSpeed);
     });
   }
 
@@ -257,8 +274,8 @@ function reset() {
 
 // Event Listeners
 diskInput.addEventListener('change', () => {
-  if (diskInput.value > 12) diskInput.value = 12;
-  if (diskInput.value < 1) diskInput.value = 1;
+  if (diskInput.value > CONFIG.DISK_COUNT_MAX) diskInput.value = CONFIG.DISK_COUNT_MAX;
+  if (diskInput.value < CONFIG.DISK_COUNT_MIN) diskInput.value = CONFIG.DISK_COUNT_MIN;
   disksCount = parseInt(diskInput.value, 10);
   reset();
 });
