@@ -248,3 +248,35 @@ button.secondary:hover {
 }
 
 /* Animation durations classes will be set dynamically via JS */
+
+/* ---------- Mode toggles (3/4-peg) ---------- */
+.mode-options {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.mode-btn {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  padding: 0.5rem 0.8rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 600;
+}
+
+.mode-btn.active {
+  background: var(--accent-color);
+  color: var(--bg-color);
+  border-color: var(--accent-color);
+}
+
+.mode-btn:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* ---------- 4-peg layout ---------- */
+.stage.four-peg .peg-container {
+  width: 160px;
+}
