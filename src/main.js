@@ -83,6 +83,15 @@ const pegContainers = [
 ];
 
 // Logic
+
+/**
+ * Generates the sequence of moves to solve Tower of Hanoi.
+ * @param {number} n - Number of disks.
+ * @param {number} source - Source peg index.
+ * @param {number} target - Target peg index.
+ * @param {number} aux - Auxiliary peg index.
+ * @returns {Array<{disk:number, from:number, to:number}>}
+ */
 function getHanoiMoves(n, source, target, aux) {
   const result = [];
   function solve(n, s, t, a) {
@@ -95,42 +104,55 @@ function getHanoiMoves(n, source, target, aux) {
   return result;
 }
 
+/**
+ * Computes geometry parameters for the given disk count.
+ * @param {number} count
+ * @returns {{diskHeight:number, spacing:number, fontSize:string, widthFor:(i:number)=>number}}
+ */
+function getGeometry(count) {
+  const diskHeight = Math.min(30, Math.floor(280 / count));
+  const spacing = diskHeight + 2;
+  const fontSize = Math.max(0.6, Math.min(0.8, diskHeight / 30)) + 'rem';
+  const widthFor = (i) => 60 + i * (140 / count);
+  return { diskHeight, spacing, fontSize, widthFor };
+}
+
+/**
+ * Renders all disks on peg 0 and resets the animation state.
+ * @returns {void}
+ */
 function initDisks() {
   // Clear existing disks
   document.querySelectorAll('.disk').forEach(d => d.remove());
-  
-  const count = parseInt(diskInput.value);
-  disksCount = count;
-  
+
+  const count = disksCount;
+
   // Dynamic sizing based on number of disks
-  const maxHeight = 280;
-  const diskHeight = Math.min(30, Math.floor(maxHeight / count));
-  const spacing = diskHeight + 2;
-  const fontSize = Math.max(0.6, Math.min(0.8, diskHeight / 30)) + 'rem';
+  const { diskHeight, spacing, fontSize, widthFor } = getGeometry(count);
 
   for (let i = count; i >= 1; i--) {
     const disk = document.createElement('div');
     disk.className = 'disk';
     disk.id = `disk-${i}`;
     disk.textContent = i;
-    
+
     // Width logic: largest disk is 180px, smallest is proportional
-    const width = 60 + (i * (140 / count));
+    const width = widthFor(i);
     disk.style.width = `${width}px`;
     disk.style.height = `${diskHeight}px`;
     disk.style.fontSize = fontSize;
     disk.style.background = `var(--disk-gradient-${((i - 1) % 8) + 1})`;
-    
+
     // Position: bottom of peg 0
     const bottomOffset = (count - i) * spacing;
     disk.style.bottom = `${bottomOffset}px`;
-    
+
     pegContainers[0].appendChild(disk);
   }
 
   moves = getHanoiMoves(count, 0, 2, 1);
   totalMovesEl.textContent = moves.length;
-  
+
   const warning = document.getElementById('high-disk-warning');
   if (count > 8) {
     warning.style.display = 'block';
@@ -147,51 +169,58 @@ function initDisks() {
   solveBtn.disabled = false;
 }
 
+/**
+ * Animates a single disk to its new peg using inverse-transform transition.
+ * @param {number} diskId - The disk number (1-indexed).
+ * @param {number} toPegIndex - Destination peg index (0-2).
+ * @returns {void}
+ */
 function moveDisk(diskId, toPegIndex) {
   const disk = document.getElementById(`disk-${diskId}`);
   const targetPeg = pegContainers[toPegIndex];
-  
+
   // Dynamic sizing
-  const count = parseInt(diskInput.value);
-  const maxHeight = 280;
-  const diskHeight = Math.min(30, Math.floor(maxHeight / count));
-  const spacing = diskHeight + 2;
+  const { spacing } = getGeometry(disksCount);
 
   // Calculate new position
   const disksInTarget = targetPeg.querySelectorAll('.disk').length;
   const newBottom = disksInTarget * spacing;
-  
+
   // Move in DOM (actually we just update styles for animation)
   // To make it look like it's "jumping" over, we could do multi-step transition,
   // but for simplicity, we'll use a smooth translation.
   // We need to move the element to the new parent to keep the relative positioning,
-  // but the animation might jitter. Better: keep them in a global container or 
+  // but the animation might jitter. Better: keep them in a global container or
   // calculate the transform relative to current position.
-  
+
   // Strategy: Calculate current absolute position, append to new peg, calculate new position,
   // and use CSS transition.
-  
+
   const oldRect = disk.getBoundingClientRect();
   targetPeg.appendChild(disk);
   disk.style.bottom = `${newBottom}px`;
   const newRect = disk.getBoundingClientRect();
-  
+
   // Inverse transform for smooth transition
   const deltaX = oldRect.left - newRect.left;
   const deltaY = oldRect.top - newRect.top;
-  
+
   disk.style.transition = 'none';
   disk.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
-  
+
   // Force reflow
   disk.offsetHeight;
-  
+
   // Transition duration based on speed
   const duration = 600 / animationSpeed;
   disk.style.transition = `all ${duration}ms cubic-bezier(0.4, 0, 0.2, 1)`;
   disk.style.transform = 'translate(0, 0)';
 }
 
+/**
+ * Plays back all moves in sequence, stopping if reset/paused.
+ * @returns {Promise<void>}
+ */
 async function startAnimation() {
   if (isPlaying) return;
   isPlaying = true;
@@ -204,7 +233,7 @@ async function startAnimation() {
     moveDisk(move.disk, move.to);
     currentMoveIndex++;
     moveCounter.textContent = currentMoveIndex;
-    
+
     await new Promise(resolve => {
       timerId = setTimeout(resolve, 800 / animationSpeed);
     });
@@ -215,6 +244,10 @@ async function startAnimation() {
   }
 }
 
+/**
+ * Stops playback and re-initializes disks to the starting state.
+ * @returns {void}
+ */
 function reset() {
   isPlaying = false;
   clearTimeout(timerId);
@@ -226,6 +259,7 @@ function reset() {
 diskInput.addEventListener('change', () => {
   if (diskInput.value > 12) diskInput.value = 12;
   if (diskInput.value < 1) diskInput.value = 1;
+  disksCount = parseInt(diskInput.value, 10);
   reset();
 });
 
