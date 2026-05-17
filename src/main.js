@@ -20,6 +20,29 @@ let isPlaying = false;
 let moves = [];
 let currentMoveIndex = 0;
 let timerId = null;
+let sourcePeg = 0;
+let targetPeg = 2;
+let auxPeg = 1;
+
+// localStorage helpers
+const STORAGE_PREFIX = 'tower-of-hanoi.';
+function loadSetting(key, fallback, validator) {
+  try {
+    const raw = localStorage.getItem(STORAGE_PREFIX + key);
+    if (raw === null) return fallback;
+    const parsed = Number(raw);
+    return validator(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function saveSetting(key, value) {
+  try {
+    localStorage.setItem(STORAGE_PREFIX + key, String(value));
+  } catch {
+    // ignore storage errors (private mode, quota)
+  }
+}
 
 // DOM Elements
 const app = document.querySelector('#app');
@@ -33,6 +56,33 @@ app.innerHTML = `
     <div class="control-group">
       <label for="disk-input">Disks</label>
       <input type="number" id="disk-input" min="1" max="12" value="4">
+    </div>
+
+    <div class="control-group">
+      <label for="from-peg">From</label>
+      <select id="from-peg" class="peg-select">
+        <option value="0">A</option>
+        <option value="1">B</option>
+        <option value="2">C</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label for="to-peg">To</label>
+      <select id="to-peg" class="peg-select">
+        <option value="0">A</option>
+        <option value="1">B</option>
+        <option value="2" selected>C</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label for="via-peg">Via</label>
+      <select id="via-peg" class="peg-select">
+        <option value="0">A</option>
+        <option value="1" selected>B</option>
+        <option value="2">C</option>
+      </select>
     </div>
 
     <div class="control-group">
@@ -89,11 +139,46 @@ const resetBtn = document.getElementById('reset-btn');
 const moveCounter = document.getElementById('move-counter');
 const totalMovesEl = document.getElementById('total-moves');
 const speedBtns = document.querySelectorAll('.speed-btn');
+const fromSelect = document.getElementById('from-peg');
+const toSelect = document.getElementById('to-peg');
+const viaSelect = document.getElementById('via-peg');
 const pegContainers = [
   document.getElementById('peg-0'),
   document.getElementById('peg-1'),
   document.getElementById('peg-2')
 ];
+
+// Load persisted settings
+disksCount = loadSetting('disks', 4, n => Number.isInteger(n) && n >= 1 && n <= 12);
+animationSpeed = loadSetting('speed', 1, n => [1, 2, 3, 5, 10].includes(n));
+
+const loadedSource = loadSetting('source', 0, n => [0, 1, 2].includes(n));
+const loadedTarget = loadSetting('target', 2, n => [0, 1, 2].includes(n));
+const loadedAux = loadSetting('aux', 1, n => [0, 1, 2].includes(n));
+
+// Verify distinct; if any collision (corrupted storage), fall back to defaults
+if (
+  loadedSource === loadedTarget ||
+  loadedSource === loadedAux ||
+  loadedTarget === loadedAux
+) {
+  sourcePeg = 0;
+  targetPeg = 2;
+  auxPeg = 1;
+} else {
+  sourcePeg = loadedSource;
+  targetPeg = loadedTarget;
+  auxPeg = loadedAux;
+}
+
+// Apply loaded values to DOM
+diskInput.value = disksCount;
+fromSelect.value = String(sourcePeg);
+toSelect.value = String(targetPeg);
+viaSelect.value = String(auxPeg);
+speedBtns.forEach(b => {
+  b.classList.toggle('active', Number(b.dataset.speed) === animationSpeed);
+});
 
 // Logic
 
@@ -141,14 +226,14 @@ function initDisks() {
     disk.style.fontSize = fontSize;
     disk.style.background = `var(--disk-gradient-${((i - 1) % 8) + 1})`;
 
-    // Position: bottom of peg 0
+    // Position: bottom of source peg
     const bottomOffset = (count - i) * spacing;
     disk.style.bottom = `${bottomOffset}px`;
 
-    pegContainers[0].appendChild(disk);
+    pegContainers[sourcePeg].appendChild(disk);
   }
 
-  moves = getHanoiMoves(count, 0, 2, 1);
+  moves = getHanoiMoves(count, sourcePeg, targetPeg, auxPeg);
   totalMovesEl.textContent = moves.length;
 
   const warning = document.getElementById('high-disk-warning');
@@ -253,11 +338,54 @@ function reset() {
   initDisks();
 }
 
+// Peg dropdown conflict resolution
+function resolvePegConflict(changedSelect) {
+  const selects = [fromSelect, toSelect, viaSelect];
+  const changedValue = Number(changedSelect.value);
+  const others = selects.filter(s => s !== changedSelect);
+
+  // Walk through the non-changed selects; if duplicate, pick lowest unused in {0,1,2}
+  for (const other of others) {
+    const otherVal = Number(other.value);
+    // Collect currently locked values (the changed one + any already-distinct other)
+    const locked = [changedValue];
+    for (const o of others) {
+      if (o !== other) locked.push(Number(o.value));
+    }
+    if (locked.includes(otherVal)) {
+      // Find lowest unused peg in {0,1,2} not in the two locked values
+      const lockedSet = new Set([changedValue, ...others.filter(o => o !== other).map(o => Number(o.value))]);
+      for (const candidate of [0, 1, 2]) {
+        if (!lockedSet.has(candidate)) {
+          other.value = String(candidate);
+          break;
+        }
+      }
+    }
+  }
+
+  sourcePeg = Number(fromSelect.value);
+  targetPeg = Number(toSelect.value);
+  auxPeg = Number(viaSelect.value);
+
+  saveSetting('source', sourcePeg);
+  saveSetting('target', targetPeg);
+  saveSetting('aux', auxPeg);
+
+  reset();
+}
+
 // Event Listeners
-diskInput.addEventListener('change', () => {
-  if (diskInput.value > CONFIG.DISK_COUNT_MAX) diskInput.value = CONFIG.DISK_COUNT_MAX;
-  if (diskInput.value < CONFIG.DISK_COUNT_MIN) diskInput.value = CONFIG.DISK_COUNT_MIN;
-  disksCount = parseInt(diskInput.value, 10);
+diskInput.addEventListener('input', () => {
+  let n = Number(diskInput.value);
+  if (!Number.isFinite(n)) return;
+  if (n > CONFIG.DISK_COUNT_MAX) n = CONFIG.DISK_COUNT_MAX;
+  if (n < CONFIG.DISK_COUNT_MIN) n = CONFIG.DISK_COUNT_MIN;
+  const clampedStr = String(n);
+  if (diskInput.value !== clampedStr) diskInput.value = clampedStr;
+  if (n === disksCount) return;
+  disksCount = n;
+  saveSetting('disks', n);
   reset();
 });
 
@@ -269,8 +397,13 @@ speedBtns.forEach(btn => {
     speedBtns.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     animationSpeed = parseFloat(btn.dataset.speed);
+    saveSetting('speed', animationSpeed);
   });
 });
+
+fromSelect.addEventListener('change', () => resolvePegConflict(fromSelect));
+toSelect.addEventListener('change', () => resolvePegConflict(toSelect));
+viaSelect.addEventListener('change', () => resolvePegConflict(viaSelect));
 
 // Initialize
 initDisks();
