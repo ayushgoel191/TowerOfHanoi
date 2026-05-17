@@ -86,13 +86,13 @@ app.innerHTML = `
     </div>
 
     <div class="control-group">
-      <label>Animation Speed</label>
-      <div class="speed-options">
-        <button class="speed-btn active" data-speed="1">1x</button>
-        <button class="speed-btn" data-speed="2">2x</button>
-        <button class="speed-btn" data-speed="3">3x</button>
-        <button class="speed-btn" data-speed="5">5x</button>
-        <button class="speed-btn" data-speed="10">10x</button>
+      <label id="speed-label">Animation Speed</label>
+      <div class="speed-options" role="group" aria-label="Animation speed">
+        <button class="speed-btn active" data-speed="1" aria-pressed="true">1x</button>
+        <button class="speed-btn" data-speed="2" aria-pressed="false">2x</button>
+        <button class="speed-btn" data-speed="3" aria-pressed="false">3x</button>
+        <button class="speed-btn" data-speed="5" aria-pressed="false">5x</button>
+        <button class="speed-btn" data-speed="10" aria-pressed="false">10x</button>
       </div>
     </div>
 
@@ -103,7 +103,7 @@ app.innerHTML = `
   </section>
 
   <div class="stats">
-    <div class="stat-item">
+    <div class="stat-item" aria-live="polite" aria-atomic="true">
       <span id="move-counter" class="stat-value">0</span>
       <span class="stat-label">Moves</span>
     </div>
@@ -112,6 +112,8 @@ app.innerHTML = `
       <span class="stat-label">Total Steps</span>
     </div>
   </div>
+
+  <div id="move-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
   <div id="high-disk-warning" style="display: none; text-align: center; color: #fbbf24; font-size: 0.9rem; margin-top: -1rem;">
     ⚠️ Note: With <span id="warn-count"></span> disks, it will take <span id="warn-moves"></span> moves!
@@ -138,6 +140,7 @@ const solveBtn = document.getElementById('solve-btn');
 const resetBtn = document.getElementById('reset-btn');
 const moveCounter = document.getElementById('move-counter');
 const totalMovesEl = document.getElementById('total-moves');
+const moveAnnouncer = document.getElementById('move-announcer');
 const speedBtns = document.querySelectorAll('.speed-btn');
 const fromSelect = document.getElementById('from-peg');
 const toSelect = document.getElementById('to-peg');
@@ -147,6 +150,14 @@ const pegContainers = [
   document.getElementById('peg-1'),
   document.getElementById('peg-2')
 ];
+const stage = document.querySelector('.stage');
+
+// Function form (not cached) so it re-checks the OS setting each call —
+// users can toggle reduced-motion mid-session.
+const prefersReducedMotion = () =>
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const pegLetter = (i) => ['A', 'B', 'C'][i];
 
 // Load persisted settings
 disksCount = loadSetting('disks', 4, n => Number.isInteger(n) && n >= 1 && n <= 12);
@@ -265,39 +276,70 @@ function moveDisk(diskId, toPegIndex) {
   // Dynamic sizing
   const { spacing } = getGeometry(disksCount);
 
-  // Calculate new position
+  // Calculate the disk's final resting bottom on the target peg
   const disksInTarget = targetPeg.querySelectorAll('.disk').length;
   const newBottom = disksInTarget * spacing;
 
-  // Move in DOM (actually we just update styles for animation)
-  // To make it look like it's "jumping" over, we could do multi-step transition,
-  // but for simplicity, we'll use a smooth translation.
-  // We need to move the element to the new parent to keep the relative positioning,
-  // but the animation might jitter. Better: keep them in a global container or
-  // calculate the transform relative to current position.
-
-  // Strategy: Calculate current absolute position, append to new peg, calculate new position,
-  // and use CSS transition.
-
+  // FLIP-style: capture old viewport position, reparent + set final bottom,
+  // then capture the new (final) viewport position so we can derive the
+  // visual delta the disk needs to travel from.
   const oldRect = disk.getBoundingClientRect();
   targetPeg.appendChild(disk);
   disk.style.bottom = `${newBottom}px`;
   const newRect = disk.getBoundingClientRect();
 
-  // Inverse transform for smooth transition
+  // Defensive: cancel any in-flight animation on this disk so we don't
+  // accumulate competing animations at high playback speeds.
+  if (disk.getAnimations) {
+    disk.getAnimations().forEach(a => a.cancel());
+  }
+
+  // If the user prefers reduced motion, snap directly: the disk is already
+  // at its final DOM position; we just ensure no stale transform lingers.
+  if (prefersReducedMotion()) {
+    disk.style.transform = '';
+    return;
+  }
+
+  // Visual deltas from final-resting-position back to where the disk was.
   const deltaX = oldRect.left - newRect.left;
   const deltaY = oldRect.top - newRect.top;
 
-  disk.style.transition = 'none';
-  disk.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+  // Apex Y: lift the disk to just above the top of the stage. Expressed as
+  // a translateY relative to the disk's final resting position so we can
+  // mix it cleanly with the X deltas in the keyframes.
+  const stageRect = stage.getBoundingClientRect();
+  const apexTranslateY = (stageRect.top + 20) - newRect.top;
 
-  // Force reflow
-  disk.offsetHeight;
+  // 3-phase parabolic trajectory via WAAPI keyframes with per-segment easing.
+  const keyframes = [
+    {
+      offset: 0,
+      transform: `translate(${deltaX}px, ${deltaY}px)`,
+      easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    },
+    {
+      offset: 0.33,
+      transform: `translate(${deltaX}px, ${apexTranslateY}px)`,
+      easing: 'cubic-bezier(0.45, 0, 0.55, 1)',
+    },
+    {
+      offset: 0.66,
+      transform: `translate(0px, ${apexTranslateY}px)`,
+      easing: 'cubic-bezier(0.55, 0, 0.85, 0.4)',
+    },
+    {
+      offset: 1,
+      transform: 'translate(0px, 0px)',
+    },
+  ];
 
-  // Transition duration based on speed
   const duration = CONFIG.BASE_MOVE_DURATION_MS / animationSpeed;
-  disk.style.transition = `all ${duration}ms cubic-bezier(0.4, 0, 0.2, 1)`;
-  disk.style.transform = 'translate(0, 0)';
+  disk.animate(keyframes, {
+    duration,
+    easing: 'linear',
+    fill: 'none',
+  });
 }
 
 /**
@@ -316,6 +358,7 @@ async function startAnimation() {
     moveDisk(move.disk, move.to);
     currentMoveIndex++;
     moveCounter.textContent = currentMoveIndex;
+    moveAnnouncer.textContent = `Move ${currentMoveIndex}: Disk ${move.disk} from peg ${pegLetter(move.from)} to peg ${pegLetter(move.to)}`;
 
     await new Promise(resolve => {
       timerId = setTimeout(resolve, CONFIG.BASE_STEP_DELAY_MS / animationSpeed);
@@ -335,6 +378,7 @@ function reset() {
   isPlaying = false;
   clearTimeout(timerId);
   diskInput.disabled = false;
+  if (moveAnnouncer) moveAnnouncer.textContent = '';
   initDisks();
 }
 
@@ -394,8 +438,12 @@ resetBtn.addEventListener('click', reset);
 
 speedBtns.forEach(btn => {
   btn.addEventListener('click', () => {
-    speedBtns.forEach(b => b.classList.remove('active'));
+    speedBtns.forEach(b => {
+      b.classList.remove('active');
+      b.setAttribute('aria-pressed', 'false');
+    });
     btn.classList.add('active');
+    btn.setAttribute('aria-pressed', 'true');
     animationSpeed = parseFloat(btn.dataset.speed);
     saveSetting('speed', animationSpeed);
   });
