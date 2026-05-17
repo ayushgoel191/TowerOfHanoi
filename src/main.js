@@ -1,4 +1,5 @@
 import './style.css'
+import { getHanoiMoves } from './hanoi.js';
 
 const CONFIG = {
   MAX_DISK_HEIGHT: 280,
@@ -95,26 +96,6 @@ const pegContainers = [
 ];
 
 // Logic
-
-/**
- * Generates the sequence of moves to solve Tower of Hanoi.
- * @param {number} n - Number of disks.
- * @param {number} source - Source peg index.
- * @param {number} target - Target peg index.
- * @param {number} aux - Auxiliary peg index.
- * @returns {Array<{disk:number, from:number, to:number}>}
- */
-function getHanoiMoves(n, source, target, aux) {
-  const result = [];
-  function solve(n, s, t, a) {
-    if (n === 0) return;
-    solve(n - 1, s, a, t);
-    result.push({ disk: n, from: s, to: t });
-    solve(n - 1, a, t, s);
-  }
-  solve(n, source, target, aux);
-  return result;
-}
 
 /**
  * Computes geometry parameters for the given disk count.
