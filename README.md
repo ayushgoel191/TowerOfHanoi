@@ -4,12 +4,32 @@ A premium, browser-based Tower of Hanoi solver with smooth step-by-step animatio
 
 ## Features
 
-- **Animated solver** — watches each disk move in real time using the FLIP animation technique
-- **1–12 disks** — disk sizes and heights scale dynamically to fit the stage
-- **Speed control** — 1×, 2×, 3×, 5×, and 10× playback speeds
-- **Live move counter** — tracks current move vs. total moves required
-- **High-disk warning** — alerts you when move count will be very large (> 8 disks)
-- **Glassmorphism UI** — dark theme with gradient-coloured disks and backdrop blur
+### Playback
+- **Animated solver** with 3-phase parabolic disk motion (lift → traverse → drop) via the Web Animations API
+- **Pause / Resume / Step ← → / Skip-to-end** controls
+- **Keyboard shortcuts** — Space (play/pause), R (reset), ←/→ (step), 1–5 (speed)
+- **1–12 disks** with dynamic sizing
+- **Speed control** — 1×, 2×, 3×, 5×, 10×
+- **Move log panel** with current-row highlight and auto-scroll
+- **Live move readout** — `Move 5 / 15 — Disk 2: Peg A → Peg C`
+- **Completion celebration** — success toast + CSS confetti, with elapsed time
+
+### Configuration
+- **From / To / Via peg pickers** with auto-conflict resolution
+- **localStorage persistence** — disk count, speed, and peg selection survive reloads
+
+### Accessibility
+- `prefers-reduced-motion` support (animations collapse to instant snap)
+- ARIA live region for screen-reader move announcements
+- `aria-pressed` on speed buttons, `role="group"` on the speed cluster
+- `:focus-visible` outlines on all interactive elements
+- WCAG-friendly disk-label contrast (white text + text-shadow)
+
+### Engineering
+- Glassmorphism UI with backdrop blur and gradient disks
+- Vitest unit tests on the solver
+- ESLint + Prettier
+- GitHub Actions CI (build / test / lint) + automated GitHub Pages deploy
 
 ## Tech Stack
 
@@ -17,16 +37,24 @@ A premium, browser-based Tower of Hanoi solver with smooth step-by-step animatio
 |---|---|
 | Bundler | Vite 8 |
 | Language | Vanilla JavaScript (ES Modules) |
-| Styling | CSS custom properties |
+| Styling | CSS custom properties + glassmorphism |
+| Animation | Web Animations API |
+| Testing | Vitest |
+| Linting | ESLint 9 (flat config) + Prettier |
+| CI / Deploy | GitHub Actions + GitHub Pages |
 | Fonts | Google Fonts — Outfit |
 
 ## Getting Started
 
 ```bash
 npm install
-npm run dev      # development server at localhost:5173
-npm run build    # production build → dist/
-npm run preview  # preview the production build
+npm run dev          # development server at localhost:5173
+npm run build        # production build → dist/
+npm run preview      # preview the production build
+npm test             # run Vitest solver tests
+npm run lint         # run ESLint
+npm run format       # write Prettier formatting
+npm run format:check # check Prettier formatting
 ```
 
 ## How It Works
