@@ -19,10 +19,24 @@ let animationSpeed = 1; // Multiplier
 let isPlaying = false;
 let moves = [];
 let currentMoveIndex = 0;
-let timerId = null;
 let sourcePeg = 0;
 let targetPeg = 2;
 let auxPeg = 1;
+let animationGeneration = 0;
+let playState = 'idle'; // 'idle' | 'playing' | 'paused' | 'finished'
+let startTime = null;
+let lastDirection = 'forward'; // 'forward' | 'reverse' — for readout
+
+// Cancellable sleep — resolves to true if still valid, false if cancelled.
+function sleep(ms, gen) {
+  return new Promise(resolve => {
+    setTimeout(() => resolve(gen === animationGeneration), ms);
+  });
+}
+
+function cancelAnimation() {
+  animationGeneration++;
+}
 
 // localStorage helpers
 const STORAGE_PREFIX = 'tower-of-hanoi.';
@@ -97,7 +111,13 @@ app.innerHTML = `
     </div>
 
     <div class="action-btns">
-      <button id="solve-btn" class="primary">Start Animation</button>
+      <button id="step-back-btn" class="icon-btn" title="Step Back (←)" aria-label="Step Back">&larr;</button>
+      <button id="solve-btn" class="primary">
+        <span class="btn-icon">&#9654;&#xFE0E;</span>
+        <span class="btn-label">Play</span>
+      </button>
+      <button id="step-forward-btn" class="icon-btn" title="Step Forward (→)" aria-label="Step Forward">&rarr;</button>
+      <button id="skip-end-btn" class="icon-btn" title="Skip to End" aria-label="Skip to End">&#9197;</button>
       <button id="reset-btn" class="secondary">Reset</button>
     </div>
   </section>
@@ -114,33 +134,53 @@ app.innerHTML = `
   </div>
 
   <div id="move-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+  <div id="move-readout"><span id="readout-text">Ready</span></div>
 
   <div id="high-disk-warning" style="display: none; text-align: center; color: #fbbf24; font-size: 0.9rem; margin-top: -1rem;">
-    ⚠️ Note: With <span id="warn-count"></span> disks, it will take <span id="warn-moves"></span> moves!
+    Note: With <span id="warn-count"></span> disks, it will take <span id="warn-moves"></span> moves!
   </div>
 
-  <section class="stage">
-    <div class="peg-container" id="peg-0">
-      <div class="peg"></div>
-      <div class="peg-label">Peg A</div>
-    </div>
-    <div class="peg-container" id="peg-1">
-      <div class="peg"></div>
-      <div class="peg-label">Peg B</div>
-    </div>
-    <div class="peg-container" id="peg-2">
-      <div class="peg"></div>
-      <div class="peg-label">Peg C</div>
-    </div>
-  </section>
+  <div class="stage-with-log">
+    <section class="stage">
+      <div class="peg-container" id="peg-0">
+        <div class="peg"></div>
+        <div class="peg-label">Peg A</div>
+      </div>
+      <div class="peg-container" id="peg-1">
+        <div class="peg"></div>
+        <div class="peg-label">Peg B</div>
+      </div>
+      <div class="peg-container" id="peg-2">
+        <div class="peg"></div>
+        <div class="peg-label">Peg C</div>
+      </div>
+    </section>
+
+    <aside class="move-log">
+      <h3>Moves</h3>
+      <ol id="move-log-list"></ol>
+    </aside>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <div id="confetti" class="confetti" aria-hidden="true"></div>
 `;
 
 const diskInput = document.getElementById('disk-input');
 const solveBtn = document.getElementById('solve-btn');
+const solveBtnIcon = solveBtn.querySelector('.btn-icon');
+const solveBtnLabel = solveBtn.querySelector('.btn-label');
 const resetBtn = document.getElementById('reset-btn');
+const stepBackBtn = document.getElementById('step-back-btn');
+const stepForwardBtn = document.getElementById('step-forward-btn');
+const skipEndBtn = document.getElementById('skip-end-btn');
 const moveCounter = document.getElementById('move-counter');
 const totalMovesEl = document.getElementById('total-moves');
 const moveAnnouncer = document.getElementById('move-announcer');
+const readoutText = document.getElementById('readout-text');
+const moveLogList = document.getElementById('move-log-list');
+const toastEl = document.getElementById('toast');
+const confettiEl = document.getElementById('confetti');
 const speedBtns = document.querySelectorAll('.speed-btn');
 const fromSelect = document.getElementById('from-peg');
 const toSelect = document.getElementById('to-peg');
@@ -259,17 +299,24 @@ function initDisks() {
   currentMoveIndex = 0;
   moveCounter.textContent = '0';
   isPlaying = false;
-  solveBtn.textContent = 'Start Animation';
-  solveBtn.disabled = false;
+  startTime = null;
+  lastDirection = 'forward';
+  setPlayState('idle');
+  buildMoveLog();
+  updateReadout();
+  updateMoveLog();
+  updateStepButtons();
+  hideToast();
 }
 
 /**
- * Animates a single disk to its new peg using inverse-transform transition.
+ * Animates a single disk to its new peg with parabolic motion (Web Animations API).
  * @param {number} diskId - The disk number (1-indexed).
- * @param {number} toPegIndex - Destination peg index (0-2).
+ * @param {number} toPegIndex - Destination peg index.
+ * @param {{snap?: boolean}} [opts] - snap=true skips animation (used by skip-to-end).
  * @returns {void}
  */
-function moveDisk(diskId, toPegIndex) {
+function moveDisk(diskId, toPegIndex, { snap = false } = {}) {
   const disk = document.getElementById(`disk-${diskId}`);
   const targetPeg = pegContainers[toPegIndex];
 
@@ -279,6 +326,15 @@ function moveDisk(diskId, toPegIndex) {
   // Calculate the disk's final resting bottom on the target peg
   const disksInTarget = targetPeg.querySelectorAll('.disk').length;
   const newBottom = disksInTarget * spacing;
+
+  if (snap) {
+    // No transition — instant placement (used by skip-to-end).
+    if (disk.getAnimations) disk.getAnimations().forEach(a => a.cancel());
+    targetPeg.appendChild(disk);
+    disk.style.bottom = `${newBottom}px`;
+    disk.style.transform = '';
+    return;
+  }
 
   // FLIP-style: capture old viewport position, reparent + set final bottom,
   // then capture the new (final) viewport position so we can derive the
@@ -305,9 +361,7 @@ function moveDisk(diskId, toPegIndex) {
   const deltaX = oldRect.left - newRect.left;
   const deltaY = oldRect.top - newRect.top;
 
-  // Apex Y: lift the disk to just above the top of the stage. Expressed as
-  // a translateY relative to the disk's final resting position so we can
-  // mix it cleanly with the X deltas in the keyframes.
+  // Apex Y: lift the disk to just above the top of the stage.
   const stageRect = stage.getBoundingClientRect();
   const apexTranslateY = (stageRect.top + 20) - newRect.top;
 
@@ -342,44 +396,279 @@ function moveDisk(diskId, toPegIndex) {
   });
 }
 
-/**
- * Plays back all moves in sequence, stopping if reset/paused.
- * @returns {Promise<void>}
- */
-async function startAnimation() {
-  if (isPlaying) return;
-  isPlaying = true;
-  solveBtn.textContent = 'Playing...';
-  solveBtn.disabled = true;
-  diskInput.disabled = true;
+function applyMoveAt(index, reverse = false, opts = {}) {
+  const move = moves[index];
+  if (!move) return;
+  const target = reverse ? move.from : move.to;
+  moveDisk(move.disk, target, opts);
+}
 
-  while (currentMoveIndex < moves.length && isPlaying) {
-    const move = moves[currentMoveIndex];
-    moveDisk(move.disk, move.to);
-    currentMoveIndex++;
-    moveCounter.textContent = currentMoveIndex;
-    moveAnnouncer.textContent = `Move ${currentMoveIndex}: Disk ${move.disk} from peg ${pegLetter(move.from)} to peg ${pegLetter(move.to)}`;
-
-    await new Promise(resolve => {
-      timerId = setTimeout(resolve, CONFIG.BASE_STEP_DELAY_MS / animationSpeed);
-    });
+function setPlayState(state) {
+  playState = state;
+  isPlaying = state === 'playing';
+  if (state === 'idle') {
+    solveBtnIcon.innerHTML = '&#9654;&#xFE0E;';
+    solveBtnLabel.textContent = 'Play';
+    solveBtn.disabled = false;
+    diskInput.disabled = false;
+  } else if (state === 'playing') {
+    solveBtnIcon.innerHTML = '&#10074;&#10074;';
+    solveBtnLabel.textContent = 'Pause';
+    solveBtn.disabled = false;
+    diskInput.disabled = true;
+  } else if (state === 'paused') {
+    solveBtnIcon.innerHTML = '&#9654;&#xFE0E;';
+    solveBtnLabel.textContent = 'Resume';
+    solveBtn.disabled = false;
+    diskInput.disabled = true;
+  } else if (state === 'finished') {
+    solveBtnIcon.innerHTML = '&#10003;';
+    solveBtnLabel.textContent = 'Finished';
+    solveBtn.disabled = true;
+    diskInput.disabled = false;
   }
+  updateStepButtons();
+}
 
-  if (currentMoveIndex >= moves.length) {
-    solveBtn.textContent = 'Finished';
+function updateStepButtons() {
+  stepBackBtn.disabled = currentMoveIndex <= 0;
+  stepForwardBtn.disabled = currentMoveIndex >= moves.length;
+  skipEndBtn.disabled = currentMoveIndex >= moves.length;
+}
+
+function updateReadout() {
+  if (!moves.length) {
+    readoutText.textContent = 'Ready';
+    return;
+  }
+  if (playState === 'finished' || currentMoveIndex >= moves.length) {
+    readoutText.textContent = `Solved in ${moves.length} moves!`;
+    return;
+  }
+  if (currentMoveIndex === 0 && playState === 'idle') {
+    readoutText.innerHTML = `Ready &mdash; <span class="readout-count">0</span> / ${moves.length} moves`;
+    return;
+  }
+  // Display the most recently applied move (currentMoveIndex - 1).
+  const shownIdx = Math.max(0, currentMoveIndex - 1);
+  const move = moves[shownIdx];
+  const reverse = lastDirection === 'reverse';
+  const from = reverse ? move.to : move.from;
+  const to = reverse ? move.from : move.to;
+  const suffix = reverse ? ' (undo)' : '';
+  readoutText.innerHTML =
+    `Move <span class="readout-count">${currentMoveIndex}</span> / ${moves.length} ` +
+    `&mdash; Disk ${move.disk}: Peg ${pegLetter(from)} &rarr; Peg ${pegLetter(to)}${suffix}`;
+}
+
+function buildMoveLog() {
+  const html = moves
+    .map(
+      (m, i) =>
+        `<li class="move-log-item" data-index="${i}">` +
+        `<span class="log-num">${i + 1}.</span> ` +
+        `Disk ${m.disk}: ${pegLetter(m.from)} &rarr; ${pegLetter(m.to)}` +
+        `</li>`
+    )
+    .join('');
+  moveLogList.innerHTML = html;
+}
+
+function updateMoveLog() {
+  const items = moveLogList.querySelectorAll('.move-log-item');
+  items.forEach((li, i) => {
+    li.classList.remove('current', 'played');
+    if (i < currentMoveIndex - 1) {
+      li.classList.add('played');
+    } else if (i === currentMoveIndex - 1 && currentMoveIndex > 0) {
+      li.classList.add('current');
+    }
+  });
+  if (currentMoveIndex > 0) {
+    const cur = moveLogList.querySelector('.move-log-item.current');
+    if (cur && cur.scrollIntoView) {
+      cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  } else if (items[0]) {
+    moveLogList.scrollTop = 0;
   }
 }
 
-/**
- * Stops playback and re-initializes disks to the starting state.
- * @returns {void}
- */
+function showCompletionToast() {
+  const seconds =
+    startTime != null ? ((performance.now() - startTime) / 1000).toFixed(1) : '0.0';
+  toastEl.textContent = `Solved in ${moves.length} moves! (${seconds} s)`;
+  toastEl.classList.remove('toast-hide');
+  toastEl.classList.add('toast-success', 'toast-show');
+  toastEl.hidden = false;
+  clearTimeout(showCompletionToast._dismissId);
+  showCompletionToast._dismissId = setTimeout(hideToast, 4000);
+  fireConfetti();
+}
+
+function hideToast() {
+  if (toastEl.hidden) return;
+  toastEl.classList.remove('toast-show');
+  toastEl.classList.add('toast-hide');
+  setTimeout(() => {
+    toastEl.hidden = true;
+    toastEl.classList.remove('toast-hide');
+  }, 400);
+}
+
+function fireConfetti() {
+  const pieces = [];
+  const count = 24;
+  for (let i = 0; i < count; i++) {
+    const left = Math.random() * 100;
+    const delay = Math.random() * 0.4;
+    const duration = 1.6 + Math.random() * 1.2;
+    const drift = (Math.random() * 2 - 1) * 80;
+    const rot = Math.random() * 720 - 360;
+    pieces.push(
+      `<div class="confetti-piece" style="left:${left}%;animation-delay:${delay}s;animation-duration:${duration}s;--drift:${drift}px;--rot:${rot}deg;"></div>`
+    );
+  }
+  confettiEl.innerHTML = pieces.join('');
+  confettiEl.classList.add('confetti-active');
+  clearTimeout(fireConfetti._stopId);
+  fireConfetti._stopId = setTimeout(() => {
+    confettiEl.classList.remove('confetti-active');
+    confettiEl.innerHTML = '';
+  }, 3000);
+}
+
+function announceMove(index, reverse = false) {
+  const move = moves[index];
+  if (!move || !moveAnnouncer) return;
+  const from = reverse ? move.to : move.from;
+  const to = reverse ? move.from : move.to;
+  moveAnnouncer.textContent = `Move ${index + 1}: Disk ${move.disk} from peg ${pegLetter(from)} to peg ${pegLetter(to)}`;
+}
+
+function finishSequence() {
+  setPlayState('finished');
+  currentMoveIndex = moves.length;
+  moveCounter.textContent = currentMoveIndex;
+  updateReadout();
+  updateMoveLog();
+  showCompletionToast();
+}
+
+async function startAnimation() {
+  if (playState === 'playing') return;
+  if (currentMoveIndex >= moves.length) return;
+  if (startTime == null) startTime = performance.now();
+  setPlayState('playing');
+  const myGen = ++animationGeneration;
+  lastDirection = 'forward';
+
+  while (currentMoveIndex < moves.length && myGen === animationGeneration) {
+    announceMove(currentMoveIndex);
+    applyMoveAt(currentMoveIndex);
+    currentMoveIndex++;
+    moveCounter.textContent = currentMoveIndex;
+    updateReadout();
+    updateMoveLog();
+    updateStepButtons();
+
+    const stillValid = await sleep(CONFIG.BASE_STEP_DELAY_MS / animationSpeed, myGen);
+    if (!stillValid) return;
+  }
+
+  if (currentMoveIndex >= moves.length && myGen === animationGeneration) {
+    finishSequence();
+  }
+}
+
+function pauseAnimation() {
+  if (playState !== 'playing') return;
+  cancelAnimation();
+  setPlayState('paused');
+  updateReadout();
+}
+
+function toggleSolve() {
+  if (playState === 'playing') {
+    pauseAnimation();
+  } else if (playState === 'idle' || playState === 'paused') {
+    startAnimation();
+  }
+}
+
+function stepForward() {
+  if (playState === 'playing') pauseAnimation();
+  if (currentMoveIndex >= moves.length) return;
+  if (startTime == null) startTime = performance.now();
+  lastDirection = 'forward';
+  announceMove(currentMoveIndex);
+  applyMoveAt(currentMoveIndex);
+  currentMoveIndex++;
+  moveCounter.textContent = currentMoveIndex;
+  updateReadout();
+  updateMoveLog();
+  if (currentMoveIndex >= moves.length) {
+    finishSequence();
+  } else {
+    updateStepButtons();
+    if (playState === 'idle') setPlayState('paused');
+  }
+}
+
+function stepBackward() {
+  if (playState === 'playing') pauseAnimation();
+  if (currentMoveIndex <= 0) return;
+  currentMoveIndex--;
+  lastDirection = 'reverse';
+  announceMove(currentMoveIndex, true);
+  applyMoveAt(currentMoveIndex, true);
+  moveCounter.textContent = currentMoveIndex;
+  updateReadout();
+  updateMoveLog();
+  updateStepButtons();
+  if (playState === 'finished') {
+    hideToast();
+    setPlayState('paused');
+  } else if (playState === 'idle' && currentMoveIndex > 0) {
+    setPlayState('paused');
+  } else if (currentMoveIndex === 0 && playState !== 'playing') {
+    setPlayState('idle');
+  }
+}
+
+function skipToEnd() {
+  if (playState === 'playing') pauseAnimation();
+  if (currentMoveIndex >= moves.length) return;
+  if (startTime == null) startTime = performance.now();
+  lastDirection = 'forward';
+  while (currentMoveIndex < moves.length) {
+    applyMoveAt(currentMoveIndex, false, { snap: true });
+    currentMoveIndex++;
+  }
+  moveCounter.textContent = currentMoveIndex;
+  finishSequence();
+}
+
 function reset() {
-  isPlaying = false;
-  clearTimeout(timerId);
-  diskInput.disabled = false;
+  cancelAnimation();
+  hideToast();
+  confettiEl.classList.remove('confetti-active');
+  confettiEl.innerHTML = '';
   if (moveAnnouncer) moveAnnouncer.textContent = '';
   initDisks();
+}
+
+function setSpeed(n) {
+  const btn = Array.from(speedBtns).find(b => parseFloat(b.dataset.speed) === n);
+  if (!btn) return;
+  speedBtns.forEach(b => {
+    b.classList.remove('active');
+    b.setAttribute('aria-pressed', 'false');
+  });
+  btn.classList.add('active');
+  btn.setAttribute('aria-pressed', 'true');
+  animationSpeed = n;
+  saveSetting('speed', n);
 }
 
 // Peg dropdown conflict resolution
@@ -388,16 +677,13 @@ function resolvePegConflict(changedSelect) {
   const changedValue = Number(changedSelect.value);
   const others = selects.filter(s => s !== changedSelect);
 
-  // Walk through the non-changed selects; if duplicate, pick lowest unused in {0,1,2}
   for (const other of others) {
     const otherVal = Number(other.value);
-    // Collect currently locked values (the changed one + any already-distinct other)
     const locked = [changedValue];
     for (const o of others) {
       if (o !== other) locked.push(Number(o.value));
     }
     if (locked.includes(otherVal)) {
-      // Find lowest unused peg in {0,1,2} not in the two locked values
       const lockedSet = new Set([changedValue, ...others.filter(o => o !== other).map(o => Number(o.value))]);
       for (const candidate of [0, 1, 2]) {
         if (!lockedSet.has(candidate)) {
@@ -433,8 +719,12 @@ diskInput.addEventListener('input', () => {
   reset();
 });
 
-solveBtn.addEventListener('click', startAnimation);
+solveBtn.addEventListener('click', toggleSolve);
 resetBtn.addEventListener('click', reset);
+stepForwardBtn.addEventListener('click', stepForward);
+stepBackBtn.addEventListener('click', stepBackward);
+skipEndBtn.addEventListener('click', skipToEnd);
+toastEl.addEventListener('click', hideToast);
 
 speedBtns.forEach(btn => {
   btn.addEventListener('click', () => {
@@ -452,6 +742,47 @@ speedBtns.forEach(btn => {
 fromSelect.addEventListener('change', () => resolvePegConflict(fromSelect));
 toSelect.addEventListener('change', () => resolvePegConflict(toSelect));
 viaSelect.addEventListener('change', () => resolvePegConflict(viaSelect));
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (event) => {
+  const t = event.target;
+  if (t && (t.tagName === 'INPUT' || t.isContentEditable)) return;
+  switch (event.key) {
+    case ' ':
+    case 'Spacebar':
+      event.preventDefault();
+      toggleSolve();
+      break;
+    case 'r':
+    case 'R':
+      event.preventDefault();
+      reset();
+      break;
+    case 'ArrowLeft':
+      event.preventDefault();
+      stepBackward();
+      break;
+    case 'ArrowRight':
+      event.preventDefault();
+      stepForward();
+      break;
+    case '1':
+      setSpeed(1);
+      break;
+    case '2':
+      setSpeed(2);
+      break;
+    case '3':
+      setSpeed(3);
+      break;
+    case '4':
+      setSpeed(5);
+      break;
+    case '5':
+      setSpeed(10);
+      break;
+  }
+});
 
 // Initialize
 initDisks();
